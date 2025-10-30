@@ -6,12 +6,9 @@ openai>=1.50.0
 openai-agents>=0.0.6
 streamlit>=1.37.0
 
-# LangChain
-langchain>=0.3.0
-langchain-core>=0.3.0
+# LangChain - minimal dependencies only
 langchain-community>=0.3.0
 langchain-openai>=0.2.0
-langchain-text-splitters>=0.3.0
 
 # Vector Search & Document Processing
 faiss-cpu>=1.7.4

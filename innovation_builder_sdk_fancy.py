@@ -11,12 +11,13 @@ import datetime
 import streamlit as st
 from io import StringIO
 
-# LangChain / RAG bits
+# LangChain / RAG bits - minimal imports to avoid conflicts
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
+
+# Alternative text splitter if needed
+import re
 
 # OpenAI Agents SDK
 from agents import Agent, Runner, function_tool, ModelSettings
@@ -101,6 +102,72 @@ def show_fancy_error(message):
     Display a fancy error message
     """
     st.error(f"❌ {message}")
+def simple_text_splitter(text, chunk_size=1500, chunk_overlap=150):
+    """
+    Simple text splitter that doesn't rely on LangChain text splitters
+    """
+    # Split by paragraphs first
+    paragraphs = text.split('\n\n')
+    chunks = []
+    current_chunk = ""
+    
+    for paragraph in paragraphs:
+        # If adding this paragraph would exceed chunk size, start a new chunk
+        if len(current_chunk) + len(paragraph) > chunk_size and current_chunk:
+            chunks.append(current_chunk.strip())
+            # Start new chunk with overlap
+            current_chunk = current_chunk[-chunk_overlap:] + paragraph
+        else:
+            current_chunk += "\n\n" + paragraph if current_chunk else paragraph
+    
+    # Add the last chunk
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+    
+    return chunks
+
+def create_simple_documents(chunks):
+    """Create simple document objects from text chunks"""
+    class SimpleDocument:
+        def __init__(self, content):
+            self.page_content = content
+            self.metadata = {}
+    
+    return [SimpleDocument(chunk) for chunk in chunks]
+
+def simple_rag_query(vectorstore, llm, question, k=4):
+    """
+    Simple RAG implementation without complex chains
+    """
+    try:
+        # Get relevant documents
+        docs = vectorstore.similarity_search(question, k=k)
+        
+        # Combine context
+        context = "\n\n".join([doc.page_content for doc in docs])
+        
+        # Create prompt
+        prompt = f"""Answer the question based on the following patent context:
+
+CONTEXT:
+{context}
+
+QUESTION: {question}
+
+ANSWER: Please provide a detailed answer based only on the patent information provided above."""
+
+        # Get response from LLM
+        response = llm.invoke(prompt)
+        
+        # Handle different response types
+        if hasattr(response, 'content'):
+            return response.content
+        else:
+            return str(response)
+            
+    except Exception as e:
+        return f"Error in RAG query: {str(e)}"
+
 def run_async_in_streamlit(coro):
     """
     Helper function to run async operations safely in Streamlit
@@ -323,16 +390,18 @@ if st.button("🚀 Start Innovation Analysis", type="primary", use_container_wid
                 
                 show_fancy_success(f"Extracted content from {len(docs)} pages")
 
-                # Chunk processing
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1500,
-                    chunk_overlap=150
-                )
-                splits = text_splitter.split_documents(docs)
+                # Combine all document text
+                full_text = "\n\n".join([doc.page_content for doc in docs])
                 
-                if not splits:
+                # Use our custom text splitter
+                text_chunks = simple_text_splitter(full_text, chunk_size=1500, chunk_overlap=150)
+                
+                if not text_chunks:
                     show_fancy_error("No text chunks could be created from the PDF.")
                     st.stop()
+                
+                # Create simple document objects
+                splits = create_simple_documents(text_chunks)
                     
                 show_fancy_success(f"Created {len(splits)} searchable text chunks")
 
@@ -344,18 +413,16 @@ if st.button("🚀 Start Innovation Analysis", type="primary", use_container_wid
                 vectorstore = FAISS.from_documents(splits, embeddings)
                 show_fancy_success("Knowledge base created successfully")
 
-                # Create retrieval chain
+                # Create simple RAG setup
                 rag_llm = ChatOpenAI(
                     temperature=0.0,
                     model="gpt-4o-mini",
                     openai_api_key=api_key,
                 )
-                chain = ConversationalRetrievalChain.from_llm(
-                    llm=rag_llm,
-                    chain_type="stuff",
-                    retriever=vectorstore.as_retriever(search_kwargs={"k": 4}),
-                    verbose=False
-                )
+                
+                # Store LLM for use in knowledge_search function
+                global rag_llm_global
+                rag_llm_global = rag_llm
                 
                 # Test knowledge base
                 test_result = vectorstore.similarity_search("patent", k=2)
@@ -384,17 +451,8 @@ if st.button("🚀 Start Innovation Analysis", type="primary", use_container_wid
                 # Debug: Show how many documents we have
                 num_docs = len(splits)
                 
-                # Use the chain to get an answer
-                result = chain.invoke({"question": question, "chat_history": []})
-                
-                # Extract the answer properly
-                if isinstance(result, dict):
-                    answer = result.get("answer", "")
-                    if not answer:
-                        # Try other possible keys
-                        answer = result.get("result", str(result))
-                else:
-                    answer = str(result)
+                # Use our simple RAG function
+                answer = simple_rag_query(vectorstore, rag_llm_global, question, k=4)
                 
                 # Add some context about the search
                 if answer and answer.strip():
