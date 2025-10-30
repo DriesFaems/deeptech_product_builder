@@ -129,11 +129,12 @@ def simple_text_splitter(text, chunk_size=1500, chunk_overlap=150):
 def create_simple_documents(chunks):
     """Create simple document objects from text chunks"""
     class SimpleDocument:
-        def __init__(self, content):
+        def __init__(self, content, doc_id=None):
             self.page_content = content
             self.metadata = {}
+            self.id = doc_id if doc_id is not None else hash(content) % 1000000
     
-    return [SimpleDocument(chunk) for chunk in chunks]
+    return [SimpleDocument(chunk, i) for i, chunk in enumerate(chunks)]
 
 def simple_rag_query(vectorstore, llm, question, k=4):
     """
